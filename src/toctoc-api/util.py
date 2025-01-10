@@ -1,28 +1,8 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
 import re
 import difflib
 import json
 import os
-from fastapi.middleware.cors import CORSMiddleware
 
-# Configuración de la aplicación FastAPI
-app = FastAPI()
-
-# Configuración de CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Cambiar "*" por dominios específicos si es necesario
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Estructura del cuerpo de la solicitud
-class RequestBody(BaseModel):
-    message: str
-    intention: str
-    additional_data: dict
 
 # Diccionario con los datos a buscar
 data_to_fill = {
@@ -149,7 +129,20 @@ data_to_fill = {
     "petFriendly": True
 }
 
-# Lista de palabras correctas
+# Lista de prompts
+prompts = [
+    "Casa pequeña con vista al mar en Valparaíso",
+    "Departamento en venta en Metropolitana",
+    "Parcela con piscina cerca de Quilpué",
+    "Casa grande en la playa de Valparaíso",
+    "Departamento usado en venta en Santiago",
+    "Caza grande serca de valpo usada",
+    "Deparamento barato en viña del mar",
+    "Casa en vanta en valpraiso",
+    "Parcela serca del mar en quilpue",
+    "Dpartamento amoblado en arrriendo en concon"
+]
+
 palabras_correctas = [
     # Regiones de Chile
     "Arica", "Parinacota", "Tarapacá", "Antofagasta", "Atacama", "Coquimbo",
@@ -260,60 +253,48 @@ palabras_correctas = [
     "calefacción", "luminoso", "esquina", "centrica"
 ]
 
-# Función para corregir errores ortográficos en un texto
+# Función para corregir errores ortográficos en un string
 def corregir_texto(texto, diccionario):
-    palabras = texto.split()
+    palabras = texto.split()  # Dividir el texto en palabras
     palabras_corregidas = []
     for palabra in palabras:
+        # Buscar la palabra más similar en el diccionario
         coincidencia = difflib.get_close_matches(palabra.lower(), diccionario, n=1, cutoff=0.7)
-        palabras_corregidas.append(coincidencia[0] if coincidencia else palabra)
+        if coincidencia:
+            palabras_corregidas.append(coincidencia[0])
+        else:
+            palabras_corregidas.append(palabra)  # Si no hay coincidencias, conservar la original
     return " ".join(palabras_corregidas)
 
 # Función para buscar coincidencias en un prompt
 def find_matches_in_prompt(prompt, data):
-    matches = {key: "" for key in data.keys()}
+    matches = {key: "" for key in data.keys()}  # Inicializar con campos vacíos
     for key, value in data.items():
-        if isinstance(value, list):
+        if isinstance(value, list):  # Si el valor es una lista, verificar cada elemento
             for sub_value in value:
                 if re.search(re.escape(str(sub_value)), prompt, re.IGNORECASE):
                     matches[key] = sub_value
                     break
-        else:
+        else:  # Si el valor es único, verificar directamente
             if re.search(re.escape(str(value)), prompt, re.IGNORECASE):
                 matches[key] = value
+    # Manejar casos donde no se especifique "typeOfOperation"
     if matches["typeOfOperation"] == "":
         matches["typeOfOperation"] = ["compra", "arriendo"]
     return {"prompt": prompt, "matches": matches}
 
-# Endpoint de la API
-@app.post("/process")
-async def process_message(request: RequestBody):
-    corrected_message = corregir_texto(request.message, palabras_correctas)
-    result = find_matches_in_prompt(corrected_message, data_to_fill)
+# Corregir los textos de los prompts
+prompts = [corregir_texto(prompt, palabras_correctas) for prompt in prompts]
 
-    # Combinar los datos adicionales si están presentes
-    if request.additional_data:
-        result["matches"].update(request.additional_data)
+# Crear directorio de salida
+directorio_salida = "prompts_json"
+os.makedirs(directorio_salida, exist_ok=True)
 
-    return {"status": "success", "data": result}
+# Generar JSON separado por cada prompt
+for idx, prompt in enumerate(prompts):
+    resultado = find_matches_in_prompt(prompt, data_to_fill)
+    archivo_salida = os.path.join(directorio_salida, f"prompt_{idx + 1}.json")
+    with open(archivo_salida, "w", encoding="utf-8") as archivo:
+        json.dump(resultado, archivo, indent=4, ensure_ascii=False)
 
-# Procesamiento de prompts de ejemplo
-prompts = [
-    "Casa pequeña con vista al mar en Valparaíso",
-    "Departamento en venta en Metropolitana",
-    "Parcela con piscina cerca de Quilpué",
-    "Casa grande en la playa de Valparaíso",
-    "Departamento usado en venta en Santiago",
-    "Caza grande serca de valpo usada",
-    "Deparamento barato en viña del mar",
-    "Casa en vanta en valpraiso",
-    "Parcela serca del mar en quilpue",
-    "Dpartamento amoblado en arrriendo en concon"
-]
-processed_prompts = []
-for prompt in prompts:
-    corrected_prompt = corregir_texto(prompt, palabras_correctas)
-    result = find_matches_in_prompt(corrected_prompt, data_to_fill)
-    processed_prompts.append(result)
-
-print("Procesamiento completado")
+print(f"Archivos JSON generados en el directorio: {directorio_salida}")
